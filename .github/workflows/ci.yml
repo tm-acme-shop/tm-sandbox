@@ -22,9 +22,9 @@ jobs:
         run: |
           output=$(python hello_world.py)
           echo "$output"
-          if echo "$output" | grep -qE "(hello world|hello earth)"; then
+          if echo "$output" | grep -qE "(hello world|howdy earth)"; then
             echo "✅ Output contains expected phrase"
           else
-            echo "❌ Output missing 'hello world' or 'hello earth'"
+            echo "❌ Output missing 'hello world' or 'howdy earth'"
             exit 1
           fi
