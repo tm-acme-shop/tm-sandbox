@@ -1,0 +1,274 @@
+# =============================================================================
+# ADVANCED BATCH CHANGE: Multi-Step Version Bump
+# =============================================================================
+# This batch spec demonstrates:
+#   1. Multiple steps with different container images
+#   2. Passing output variables between steps
+#   3. Using outputs in the changesetTemplate (PR title, body, branch)
+#   4. A realistic workflow: Analyze → Transform → Validate
+# =============================================================================
+
+version: 2
+
+name: multi-step-version-bump
+
+description: |
+  **Advanced Demo:** Multi-step batch change using Python, NodeJS, and Alpine
+  containers to analyze, transform, and validate version bumps across a polyglot
+  codebase.
+
+# =============================================================================
+# ON: Target repositories
+# =============================================================================
+# For sandbox testing, target a specific repo. In production, you'd use a query.
+on:
+  # Option 1: Target a specific repository (update with your repo)
+  - repository: github.com/tm-acme-shop/tm-sandbox
+
+  # Option 2: Use a search query to find repos with both files
+  # - repositoriesMatchingQuery: file:app.py file:index.js
+
+# =============================================================================
+# STEPS: The multi-step workflow
+# =============================================================================
+# Each step runs in sequence. Later steps can access outputs from earlier steps.
+steps:
+  # -------------------------------------------------------------------------
+  # STEP 1: ANALYZE (Python container)
+  # -------------------------------------------------------------------------
+  # Purpose: Read current version, compute next version, detect languages
+  # Output: JSON object with version info for subsequent steps
+  # -------------------------------------------------------------------------
+  - run: |
+      echo "═══════════════════════════════════════════════════════════════"
+      echo "  STEP 1: ANALYZE (Python)"
+      echo "═══════════════════════════════════════════════════════════════"
+
+      python3 << 'EOF'
+      import json
+      from pathlib import Path
+
+      print("📊 Analyzing repository...")
+
+      # 1) Read current version from VERSION file
+      version_file = Path("VERSION")
+      if version_file.exists():
+          current_version = version_file.read_text().strip()
+          print(f"   Found VERSION file: {current_version}")
+      else:
+          current_version = "0.1.0"
+          print(f"   No VERSION file, defaulting to: {current_version}")
+
+      # 2) Compute the next version (bump patch number)
+      try:
+          major, minor, patch = map(int, current_version.split("."))
+          new_version = f"{major}.{minor}.{patch + 1}"
+      except Exception:
+          new_version = "0.1.1"
+      print(f"   New version will be: {new_version}")
+
+      # 3) Detect which languages are present
+      languages = []
+      if Path("app.py").exists():
+          languages.append("python")
+          print("   ✓ Detected Python (app.py)")
+      if Path("index.js").exists():
+          languages.append("nodejs")
+          print("   ✓ Detected NodeJS (index.js)")
+
+      # 4) Write analysis to JSON file (will be captured as output)
+      analysis = {
+          "current_version": current_version,
+          "new_version": new_version,
+          "languages": languages,
+          "files_to_update": ["app.py", "index.js", "VERSION"]
+      }
+
+      Path("analysis.json").write_text(json.dumps(analysis, indent=2))
+      print(f"\n📄 Analysis complete:")
+      print(json.dumps(analysis, indent=2))
+      EOF
+
+    container: python:3.11-slim
+
+    # Capture the JSON file as a structured output variable
+    # This makes it available to subsequent steps as: outputs.analysis
+    outputs:
+      analysis:
+        value: ${{ readFile("analysis.json") }}
+        format: json
+
+  # -------------------------------------------------------------------------
+  # STEP 2: TRANSFORM (NodeJS container)
+  # -------------------------------------------------------------------------
+  # Purpose: Update version strings in both Python and NodeJS files
+  # Input: Uses NEW_VERSION from Step 1's output
+  # -------------------------------------------------------------------------
+  - run: |
+      echo "═══════════════════════════════════════════════════════════════"
+      echo "  STEP 2: TRANSFORM (NodeJS)"
+      echo "═══════════════════════════════════════════════════════════════"
+      echo "  Updating to version: $NEW_VERSION"
+      echo ""
+
+      node << 'EOF'
+      const fs = require('fs');
+
+      const newVersion = process.env.NEW_VERSION;
+      console.log(`📝 Transforming files to version ${newVersion}...\n`);
+
+      function updateFile(path, pattern, description) {
+        if (!fs.existsSync(path)) {
+          console.log(`   ⏭️  Skipping ${path} (not found)`);
+          return false;
+        }
+
+        const original = fs.readFileSync(path, 'utf8');
+        const updated = original.replace(pattern, (match, prefix, oldVersion, suffix) => {
+          console.log(`   ✏️  ${path}: "${oldVersion}" → "${newVersion}"`);
+          return `${prefix}${newVersion}${suffix}`;
+        });
+
+        if (original !== updated) {
+          fs.writeFileSync(path, updated);
+          return true;
+        }
+        console.log(`   ⚠️  No changes made to ${path}`);
+        return false;
+      }
+
+      // Update app.py: VERSION = "0.1.0"
+      updateFile('app.py', /(VERSION\s*=\s*["'])([^"']+)(["'])/, 'Python VERSION');
+
+      // Update index.js: const VERSION = "0.1.0";
+      updateFile('index.js', /(const\s+VERSION\s*=\s*["'])([^"']+)(["'];?)/, 'NodeJS VERSION');
+
+      console.log('\n✅ Transform complete!');
+      EOF
+
+      # Also update the VERSION file
+      if [ -f VERSION ]; then
+        echo ""
+        echo "   ✏️  VERSION file: updating to $NEW_VERSION"
+        echo "$NEW_VERSION" > VERSION
+      fi
+
+    container: node:20-slim
+
+    # Environment variables passed from Step 1's outputs
+    env:
+      NEW_VERSION: ${{ outputs.analysis.new_version }}
+
+  # -------------------------------------------------------------------------
+  # STEP 3: VALIDATE (Alpine container)
+  # -------------------------------------------------------------------------
+  # Purpose: Verify that all files were updated correctly
+  # Input: Uses the new_version from Step 1 to validate
+  # -------------------------------------------------------------------------
+  - run: |
+      echo "═══════════════════════════════════════════════════════════════"
+      echo "  STEP 3: VALIDATE (Alpine)"
+      echo "═══════════════════════════════════════════════════════════════"
+      echo ""
+
+      EXPECTED="$NEW_VERSION"
+      ERRORS=0
+
+      echo "🔍 Validating version $EXPECTED in all files..."
+      echo ""
+
+      # Check app.py
+      if [ -f app.py ]; then
+        if grep -q "$EXPECTED" app.py; then
+          echo "   ✅ app.py contains version $EXPECTED"
+        else
+          echo "   ❌ app.py does NOT contain version $EXPECTED"
+          ERRORS=$((ERRORS + 1))
+        fi
+      fi
+
+      # Check index.js
+      if [ -f index.js ]; then
+        if grep -q "$EXPECTED" index.js; then
+          echo "   ✅ index.js contains version $EXPECTED"
+        else
+          echo "   ❌ index.js does NOT contain version $EXPECTED"
+          ERRORS=$((ERRORS + 1))
+        fi
+      fi
+
+      # Check VERSION file
+      if [ -f VERSION ]; then
+        if grep -q "$EXPECTED" VERSION; then
+          echo "   ✅ VERSION file contains $EXPECTED"
+        else
+          echo "   ❌ VERSION file does NOT contain $EXPECTED"
+          ERRORS=$((ERRORS + 1))
+        fi
+      fi
+
+      echo ""
+      if [ $ERRORS -eq 0 ]; then
+        echo "═══════════════════════════════════════════════════════════════"
+        echo "  ✅ VALIDATION PASSED - All files updated correctly!"
+        echo "═══════════════════════════════════════════════════════════════"
+      else
+        echo "═══════════════════════════════════════════════════════════════"
+        echo "  ❌ VALIDATION FAILED - $ERRORS file(s) not updated"
+        echo "═══════════════════════════════════════════════════════════════"
+        exit 1
+      fi
+
+    container: alpine:3
+
+    env:
+      NEW_VERSION: ${{ outputs.analysis.new_version }}
+
+# =============================================================================
+# CHANGESET TEMPLATE: Pull Request configuration
+# =============================================================================
+# Notice how we use outputs from Step 1 throughout the PR template!
+changesetTemplate:
+  # Dynamic title using the computed version
+  title: "chore: bump version to ${{ outputs.analysis.new_version }}"
+
+  # Rich PR body with all the analysis details
+  body: |
+    ## 🚀 Automated Version Bump
+
+    This PR was created by a **multi-step Sourcegraph Batch Change**.
+
+    ### Version Change
+    | | Version |
+    |---|---|
+    | **Previous** | `${{ outputs.analysis.current_version }}` |
+    | **New** | `${{ outputs.analysis.new_version }}` |
+
+    ### Workflow Summary
+
+    | Step | Container | Purpose |
+    |------|-----------|---------|
+    | 1. Analyze | `python:3.11-slim` | Read current version, compute next version, detect languages |
+    | 2. Transform | `node:20-slim` | Update version strings in Python and NodeJS files |
+    | 3. Validate | `alpine:3` | Verify all files contain the new version |
+
+    ### Files Updated
+    - `app.py` - Python application
+    - `index.js` - NodeJS application
+    - `VERSION` - Version tracking file
+
+    ### Detected Languages
+    ${{ outputs.analysis.languages }}
+
+    ---
+    *Created with [Sourcegraph Batch Changes](https://sourcegraph.com/docs/batch-changes)*
+
+  # Dynamic branch name using the new version
+  branch: batch/version-bump-${{ outputs.analysis.new_version }}
+
+  # Commit message also uses the output
+  commit:
+    message: "chore: bump version to ${{ outputs.analysis.new_version }}"
+
+  # Keep as preview until ready to create real PRs
+  published: false

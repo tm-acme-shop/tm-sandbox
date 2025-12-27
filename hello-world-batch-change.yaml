@@ -1,0 +1,155 @@
+# =============================================================================
+# Sourcegraph Batch Change Spec
+# =============================================================================
+# This file defines a batch change - an automated way to make code changes
+# across multiple repositories at once.
+#
+# How it works:
+# 1. The "on" section finds repositories to change
+# 2. The "steps" section runs commands to make changes
+# 3. The "changesetTemplate" creates pull requests with your changes
+# =============================================================================
+
+# Always use version 2 (recommended for Sourcegraph 5.5+)
+version: 2
+
+# A unique name for this batch change (no spaces allowed)
+name: hello-world-to-howdy-earth
+
+# Description shown in Sourcegraph UI (supports Markdown)
+description: |
+  This batch change updates the greeting message in `hello_world.py` files.
+
+  **Changes made:**
+  - Replaces `"hello world"` with `"howdy earth"`
+
+# =============================================================================
+# ON: Where should this batch change run?
+# =============================================================================
+# This section defines which repositories to target.
+# You can use Sourcegraph search queries to find repos.
+on:
+  # Find all repos containing a file named "hello_world.py"
+  # The search query syntax is the same as Sourcegraph code search
+  - repositoriesMatchingQuery: repo:tm-sandbox file:hello_world.py
+
+# =============================================================================
+# STEPS: What changes should be made?
+# =============================================================================
+# Each step runs inside a Docker container with access to the repo files.
+# Changes made by steps are captured as a diff for the pull request.
+steps:
+  - run: |
+      # -----------------------------------------------------------------------
+      # LOGS TAB: Any echo/print statements appear in the "Logs" tab
+      # This helps you debug and see what's happening during execution
+      # -----------------------------------------------------------------------
+      echo "🚀 Starting batch change execution..."
+      echo "📁 Repository: ${REPO_NAME}"
+      echo "🔄 Old greeting: ${OLD_GREETING}"
+      echo "✨ New greeting: ${NEW_GREETING}"
+      
+      # Show the file before changes
+      echo ""
+      echo "📄 Before change:"
+      cat hello_world.py
+      
+      # Perform the replacement using the environment variables
+      sed -i "s/${OLD_GREETING}/${NEW_GREETING}/g" hello_world.py
+      
+      # Show the file after changes
+      echo ""
+      echo "📄 After change:"
+      cat hello_world.py
+      
+      echo ""
+      echo "✅ Batch change completed successfully!"
+
+    container: alpine:3
+
+    # -------------------------------------------------------------------------
+    # ENV TAB (Files/Env): Environment variables available to the step
+    # -------------------------------------------------------------------------
+    # These appear in the "Files/Env" tab and can be used in your run script.
+    # Great for making your batch spec configurable and reusable!
+    env:
+      # Static values you define
+      OLD_GREETING: "hello world"
+      NEW_GREETING: "howdy earth"
+      # Template variable - automatically populated by Sourcegraph
+      # See: https://sourcegraph.com/docs/batch-changes/batch-spec-templating
+      REPO_NAME: ${{ repository.name }}
+
+    # -------------------------------------------------------------------------
+    # FILES TAB (Files/Env): Files mounted into the container
+    # -------------------------------------------------------------------------
+    # These appear in the "Files/Env" tab.
+    # Useful for mounting scripts, configs, or reference data into your step.
+    files:
+      # A simple script file (just for demonstration)
+      # You could run this with: sh /tmp/my-script.sh
+      /tmp/my-script.sh: |
+        #!/bin/sh
+        echo "This is a mounted script file!"
+        echo "You can put complex logic here instead of inline in 'run'"
+      
+      # A config/reference file (just for demonstration)
+      /tmp/replacements.txt: |
+        # This file could contain a list of replacements
+        # Your script could read this to perform multiple changes
+        hello world -> howdy earth
+
+    # -------------------------------------------------------------------------
+    # OUTPUT VARIABLES TAB: Capture values for use in later steps or templates
+    # -------------------------------------------------------------------------
+    # These appear in the "Output variables" tab.
+    # Useful for passing data between steps or into the changesetTemplate.
+    # 
+    # Common template variables you can use:
+    #   ${{ step.stdout }}           - ALL stdout (usually too much!)
+    #   ${{ step.stderr }}           - ALL stderr  
+    #   ${{ step.modified_files }}   - List of files changed by this step
+    #   ${{ repository.name }}       - Full repo name (e.g., github.com/org/repo)
+    #   ${{ repository.branch }}     - Current branch name
+    outputs:
+      # Capture which files were modified (useful for PR descriptions)
+      files_changed:
+        value: ${{ step.modified_files }}
+      
+      # Capture just the repo name for use in later steps
+      repo:
+        value: ${{ repository.name }}
+
+# =============================================================================
+# CHANGESET TEMPLATE: How should the pull request look?
+# =============================================================================
+# This defines the PR/MR that gets created on your code host (GitHub, GitLab, etc.)
+changesetTemplate:
+  # Title of the pull request
+  title: "chore: update greeting from hello world to howdy earth"
+
+  # Body/description of the pull request (supports Markdown)
+  body: |
+    ## Summary
+    This PR updates the greeting message in `hello_world.py`.
+
+    **Before:** `print("hello world")`
+    **After:** `print("howdy earth")`
+
+    ---
+    *This change was created automatically using [Sourcegraph Batch Changes](https://sourcegraph.com/docs/batch-changes).*
+
+  # Branch name for the changes
+  # TIP: Make branch names unique to avoid conflicts with other batch changes
+  branch: batch-changes/howdy-earth-v2
+
+  # Commit message for the changes
+  commit:
+    message: "chore: update greeting from hello world to howdy earth"
+
+  # Whether to publish the changeset immediately
+  # Options:
+  #   - false: Preview only (won't create real PRs)
+  #   - true: Create real PRs immediately
+  #   - "draft": Create as draft PRs
+  # published: false
