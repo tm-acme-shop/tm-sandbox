@@ -40,24 +40,29 @@ steps:
   # Output: JSON object with version info for subsequent steps
   # -------------------------------------------------------------------------
   - run: |
-      echo "═══════════════════════════════════════════════════════════════"
-      echo "  STEP 1: ANALYZE (Python)"
-      echo "═══════════════════════════════════════════════════════════════"
+      echo "═══════════════════════════════════════════════════════════════" >&2
+      echo "  STEP 1: ANALYZE (Python)" >&2
+      echo "═══════════════════════════════════════════════════════════════" >&2
 
       python3 << 'EOF'
       import json
+      import sys
       from pathlib import Path
 
-      print("📊 Analyzing repository...")
+      # Use stderr for debug output, stdout for JSON only
+      def log(msg):
+          print(msg, file=sys.stderr)
+
+      log("📊 Analyzing repository...")
 
       # 1) Read current version from VERSION file
       version_file = Path("VERSION")
       if version_file.exists():
           current_version = version_file.read_text().strip()
-          print(f"   Found VERSION file: {current_version}")
+          log(f"   Found VERSION file: {current_version}")
       else:
           current_version = "0.1.0"
-          print(f"   No VERSION file, defaulting to: {current_version}")
+          log(f"   No VERSION file, defaulting to: {current_version}")
 
       # 2) Compute the next version (bump patch number)
       try:
@@ -65,18 +70,18 @@ steps:
           new_version = f"{major}.{minor}.{patch + 1}"
       except Exception:
           new_version = "0.1.1"
-      print(f"   New version will be: {new_version}")
+      log(f"   New version will be: {new_version}")
 
       # 3) Detect which languages are present
       languages = []
       if Path("app.py").exists():
           languages.append("python")
-          print("   ✓ Detected Python (app.py)")
+          log("   ✓ Detected Python (app.py)")
       if Path("index.js").exists():
           languages.append("nodejs")
-          print("   ✓ Detected NodeJS (index.js)")
+          log("   ✓ Detected NodeJS (index.js)")
 
-      # 4) Write analysis to JSON file (will be captured as output)
+      # 4) Output analysis as JSON to stdout (for capture)
       analysis = {
           "current_version": current_version,
           "new_version": new_version,
@@ -84,9 +89,11 @@ steps:
           "files_to_update": ["app.py", "index.js", "VERSION"]
       }
 
-      Path("analysis.json").write_text(json.dumps(analysis, indent=2))
-      print(f"\n📄 Analysis complete:")
-      print(json.dumps(analysis, indent=2))
+      log(f"\n📄 Analysis complete:")
+      log(json.dumps(analysis, indent=2))
+      
+      # Only the final JSON goes to stdout for the outputs capture
+      print(json.dumps(analysis))
       EOF
 
     container: python:3.11-slim
@@ -95,7 +102,7 @@ steps:
     # This makes it available to subsequent steps as: outputs.analysis
     outputs:
       analysis:
-        value: ${{ readFile("analysis.json") }}
+        value: ${{ step.stdout }}
         format: json
 
   # -------------------------------------------------------------------------
